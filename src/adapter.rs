@@ -194,6 +194,149 @@ macro_rules! container_of {
 /// # fn main() {}
 /// ```
 #[macro_export(local_inner_macros)]
+#[cfg(feature = "nightly")]
+macro_rules! intrusive_adapter {
+    (@impl
+        ($($privacy:tt)*) $name:ident ($($args:tt $(: ?$bound:tt)*),*)
+        = $pointer:ty: $value:path { $field:ident: $link:ty } $($where_:tt)*
+    ) => {
+        #[allow(explicit_outlives_requirements)]
+        $($privacy)* struct $name<$($args),*>($crate::__core::marker::PhantomData<$pointer>) $($where_)*;
+        unsafe impl<$($args $(: ?$bound)*),*> Send for $name<$($args),*> $($where_)* {}
+        unsafe impl<$($args $(: ?$bound)*),*> Sync for $name<$($args),*> $($where_)* {}
+        impl<$($args $(: ?$bound)*),*> Copy for $name<$($args),*> $($where_)* {}
+        impl<$($args $(: ?$bound)*),*> Clone for $name<$($args),*> $($where_)* {
+            fn clone(&self) -> Self {
+                *self
+            }
+        }
+        impl<$($args $(: ?$bound)*),*> Default for $name<$($args),*> $($where_)* {
+            fn default() -> Self {
+                Self::NEW
+            }
+        }
+        #[allow(dead_code)]
+        impl<$($args $(: ?$bound)*),*> $name<$($args),*> $($where_)* {
+            pub const NEW: Self = $name($crate::__core::marker::PhantomData);
+            pub const fn new() -> Self {
+                Self::NEW
+            }
+        }
+        #[allow(dead_code, unsafe_code)]
+        unsafe impl<$($args $(: ?$bound)*),*> $crate::Adapter for $name<$($args),*> $($where_)* {
+            type Link = $link;
+            type Value = $value;
+            type Pointer = $pointer;
+            #[inline]
+            unsafe fn get_value(&self, link: *const $link) -> *const $value {
+                container_of!(link, $value, $field)
+            }
+            #[inline]
+            unsafe fn get_link(&self, value: *const $value) -> *const $link {
+                &(*value).$field
+            }
+        }
+    };
+    (@find_generic
+        ($($privacy:tt)*) $name:tt ($($prev:tt)*) > $($rest:tt)*
+    ) => {
+        intrusive_adapter!(@impl
+            ($($privacy)*) $name ($($prev)*) $($rest)*
+        );
+    };
+    (@find_generic
+        ($($privacy:tt)*) $name:tt ($($prev:tt)*) $cur:tt $($rest:tt)*
+    ) => {
+        intrusive_adapter!(@find_generic
+            ($($privacy)*) $name ($($prev)* $cur) $($rest)*
+        );
+    };
+    (@find_if_generic
+        ($($privacy:tt)*) $name:tt < $($rest:tt)*
+    ) => {
+        intrusive_adapter!(@find_generic
+            ($($privacy)*) $name () $($rest)*
+        );
+    };
+    (@find_if_generic
+        ($($privacy:tt)*) $name:tt $($rest:tt)*
+    ) => {
+        intrusive_adapter!(@impl
+            ($($privacy)*) $name () $($rest)*
+        );
+    };
+    (pub $name:tt $($rest:tt)*) => {
+        intrusive_adapter!(@find_if_generic
+            (pub) $name $($rest)*
+        );
+    };
+    ($name:tt $($rest:tt)*) => {
+        intrusive_adapter!(@find_if_generic
+            () $name $($rest)*
+        );
+    };
+}
+
+
+/// Macro to generate an implementation of `Adapter` for a given set of types.
+/// In particular this will automatically generate implementations of the
+/// `get_value` and `get_link` methods for a given named field in a struct.
+///
+/// The basic syntax to create an adapter is:
+///
+/// ```rust,ignore
+/// intrusive_adapter!(Adapter = Pointer: Value { link_field: LinkType });
+/// ```
+///
+/// You can create a new instance of an adapter using the `new` method or the
+/// `NEW` associated constant. The adapter also implements the `Default` trait.
+///
+/// # Generics
+///
+/// This macro supports generic arguments:
+///
+/// ```rust,ignore
+/// intrusive_adapter!(
+///     Adapter<'lifetime, Type, Type2: ?Sized> =
+///         Pointer: Value {
+///             link_field: LinkType
+///         }
+///         where
+///             Type: Copy,
+///             Type2: 'lifetime
+///     );
+/// ```
+///
+/// Note that due to macro parsing limitations, only `?Trait` style bounds are
+/// allowed in the generic argument list. In most cases this is only needed for
+/// `?Sized`. Other bounds can be specified in the `where` clause at the end
+/// the macro.
+///
+/// # Examples
+///
+/// ```
+/// #[macro_use]
+/// extern crate intrusive_collections;
+/// use intrusive_collections::{LinkedListLink, RBTreeLink};
+///
+/// pub struct Test {
+///     link: LinkedListLink,
+///     link2: RBTreeLink,
+/// }
+/// intrusive_adapter!(MyAdapter = Box<Test>: Test { link: LinkedListLink });
+/// intrusive_adapter!(pub MyAdapter2 = Box<Test>: Test { link2: RBTreeLink });
+///
+/// pub struct Test2<T: ?Sized>
+///     where T: Clone
+/// {
+///     link: LinkedListLink,
+///     val: T,
+/// }
+/// intrusive_adapter!(MyAdapter3<'a, T: ?Sized> = &'a Test2<T>: Test2<T> { link: LinkedListLink } where T: Clone + 'a);
+/// # fn main() {}
+/// ```
+#[macro_export(local_inner_macros)]
+#[cfg(not(feature = "nightly"))]
 macro_rules! intrusive_adapter {
     (@impl
         ($($privacy:tt)*) $name:ident ($($args:tt $(: ?$bound:tt)*),*)
